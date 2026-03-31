@@ -1,0 +1,2 @@
+- Replace http download of static site branch with a git client, this will allow us to efficently update the local version of the site.
+    - Needs git authentication to work, especially if working with private repositories
