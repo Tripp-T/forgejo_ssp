@@ -1,8 +1,8 @@
-use std::io::{self, Cursor};
+use std::{io::{self, Cursor}, time::UNIX_EPOCH};
 
 use clap::error;
+use git2::{Cred, RemoteCallbacks, Repository, build::{CheckoutBuilder, RepoBuilder}};
 use tokio::fs;
-use zip::ZipArchive;
 
 use crate::*;
 
@@ -17,72 +17,123 @@ impl DataManager {
         }
         Ok(Self { data_dir })
     }
+
+    /// Returns the path to the local repository for the given user and repo, refreshing it if necessary
     pub async fn get_repo(&self, user: &str, repo: &str, opts: &Opts) -> Result<std::path::PathBuf, AppError> {
         let assumed_path = self.data_dir.join(user).join(repo);
-        if assumed_path.is_dir() {
-            return Ok(assumed_path)
+        if assumed_path.exists()
+            && let Some(meta) = self.get_meta(user, repo).await?
+                && meta.seconds_since_updated() < 60 * 60 {
+                    // Repo is present, and has been updated in the last hour
+                    return Ok(assumed_path);
         }
-        let remote_url = format!("{base_url}/{user}/{repo}/archive/{branch}.zip", base_url = opts.git_https_base_url, branch = opts.git_pages_branch);
-        let response = reqwest::get(remote_url).await.context("failed to get make git https request").map_err(|e| {
-            error!("{e}");
-            AppError::InternalError
-        })?;
-        if !response.status().is_success() {
-            error!("Response status is not success: {response:?}");
-            return Err(AppError::InternalError)
-        }
-        let bytes = response.bytes().await.context("Failed to parse bytes").map_err(|e| {
-            error!("{e}");
-            AppError::InternalError
-        })?;
+        // Repo is not present, or has been updated more than an hour ago
+        self.refresh_repo(user, repo, opts).await?;
+        Ok(assumed_path)
+    }
 
-        let reader = Cursor::new(bytes);
-        let mut archive = ZipArchive::new(reader).context("Failed to open zip archive").map_err(|e| {
-            error!("Failed to open archive: {e}");
-            AppError::InternalError
-        })?;
+    /// Refreshes local repository with remote
+    pub async fn refresh_repo(&self, user: &str, repo: &str, opts: &Opts) -> Result<(), AppError> {
+        let local_path = self.data_dir.join(user).join(repo);
+        let repo_url = format!("{base_url}/{user}/{repo}.git", base_url = opts.git_https_base_url);
 
-        for i in 0..archive.len() {
-            let assumed_path = self.data_dir.join(user); // All files in the archive are under a parent folder named after the repo, so we re-initialize the assumed path
-            let mut file = archive.by_index(i).map_err(|e| {
-                error!("Failed to index zip archive: {e}");
+        let repository = RepoBuilder::new()
+            .fetch_options({
+                let mut callbacks = RemoteCallbacks::new();
+                callbacks.credentials(|_url, _, _| {
+                    Cred::userpass_plaintext("git", &opts.git_password)
+                });
+                let mut fo = git2::FetchOptions::new();
+                fo.remote_callbacks(callbacks);
+                fo
+            })
+            .clone(&repo_url, &local_path)
+            .map_err(|e| {
+                error!("Failed to clone remote repository: {e}");
                 AppError::InternalError
             })?;
+        
+        {
+            let desired_branch = format!("origin/{}", opts.git_pages_branch);
+            let obj = repository.revparse_single(&desired_branch)
+                .map_err(|e| {
+                    error!("Failed to find desired branch for remote repository: {e}");
+                    std::fs::remove_dir_all(local_path).context("Failed to remove local repository").unwrap();
+                    AppError::NotFound
+                })?;
             
-            // Use enclosed_name() to prevent "Zip Slip" directory traversal attacks
-            let outpath = match file.enclosed_name() {
-                Some(path) => assumed_path.join(path),
-                None => continue, 
-            };
-
-            // If the item is a directory, create it
-            if file.is_dir() {
-                fs::create_dir_all(&outpath).await.map_err(|e| {
-                    error!("Failed to create directory: {e}");
-                    AppError::InternalError
-                })?;
-            } else {
-                // If the item is a file, ensure its parent directory exists
-                if let Some(p) = outpath.parent() {
-                    if !p.exists() {
-                        fs::create_dir_all(p).await.map_err(|e| {
-                            error!("Failed to create directory: {e}");
-                            AppError::InternalError
-                        })?;
-                    }
-                }
-                // Create the file and copy the uncompressed contents into it
-                let mut outfile = std::fs::File::create(&outpath).map_err(|e| {
-                    error!("Failed to create file: {e}");
-                    AppError::InternalError
-                })?;
-                io::copy(&mut file, &mut outfile).map_err(|e| {
-                    error!("Failed to copy file: {e}");
-                    AppError::InternalError
-                })?;
-            }
+            repository.checkout_tree(&obj, Some(CheckoutBuilder::new().force())).map_err(|e| {
+                error!("Failed to checkout desired branch for remote repository: {e}");
+                AppError::InternalError
+            })?;
+    
+            repository.set_head(&format!("refs/heads/{}", &opts.git_pages_branch)).map_err(|e| {
+                error!("Failed to set head for remote repository: {e}");
+                AppError::InternalError
+            })?;
         }
-        Ok(assumed_path)
+
+        let mut meta = self.get_meta(user, repo).await?.unwrap_or_default();
+        meta.update();
+        self.set_meta(user, repo, meta).await?;
+        Ok(())
+    }
+    
+    /// Get [RepoMeta] for a given user and repo, if it exists
+    pub async fn get_meta(&self, user: &str, repo: &str) -> Result<Option<RepoMeta>, AppError> {
+        let path = self.data_dir.join(user).join(format!("{repo}.meta.json"));
+        if !path.exists() {
+            return Ok(None)
+        }
+        let meta = tokio::fs::read_to_string(&path).await.map_err(|e| {
+            error!("Failed to read meta file: {e}");
+            AppError::InternalError
+        })?;
+        let meta: RepoMeta = serde_json::from_str(&meta).map_err(|e| {
+            error!("Failed to parse meta file: {e}");
+            AppError::InternalError
+        })?;
+        Ok(Some(meta))
+    }
+
+    /// Set [RepoMeta] for a given user and repo
+    pub async fn set_meta(&self, user: &str, repo: &str, meta: RepoMeta) -> Result<(), AppError> {
+        let path = self.data_dir.join(user).join(format!("{repo}.meta.json"));
+        let meta = serde_json::to_string(&meta).map_err(|e| {
+            error!("Failed to serialize meta: {e}");
+            AppError::InternalError
+        })?;
+        tokio::fs::write(&path, meta).await.map_err(|e| {
+            error!("Failed to write meta file: {e}");
+            AppError::InternalError
+        })?;
+        Ok(())
     }
 }
 
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RepoMeta {
+    created_at: u64,
+    updated_at: u64,
+}
+impl Default for RepoMeta {
+    fn default() -> Self {
+        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
+        Self {
+            created_at: current_time,
+            updated_at: current_time,
+        }
+    }
+
+}
+impl RepoMeta {
+    pub fn update(&mut self) {
+        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
+        self.updated_at = current_time;
+    }
+    pub fn seconds_since_updated(&self) -> u64 {
+        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
+        current_time - self.updated_at
+    }
+}

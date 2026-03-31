@@ -5,13 +5,14 @@ edition = "2024"
 
 [dependencies]
 anyhow = "1.0.102"
-axum = "0.8.8"
+axum = { version = "0.8.8", features = ["macros"] }
 clap = { version = "4.6.0", features = ["derive", "env"] }
+git2 = "0.20.4"
 reqwest = "0.13.2"
 serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
 thiserror = "2.0.18"
 tokio = { version = "1.50.0", features = ["full"] }
 tower-http = { version = "0.6.8", features = ["fs"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-zip = "8.4.0"

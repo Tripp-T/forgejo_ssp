@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use ::{
-    anyhow::{Context, anyhow, bail, ensure}, axum::{Router, body::Body, extract::{FromRequestParts, Request, State}, http::{HeaderName, Response}, response::IntoResponse}, clap::Parser, reqwest::StatusCode, serde::{Deserialize, Serialize}, std::{ops::Deref, sync::Arc}, tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody}, tracing::{debug, error, info, trace, warn}, tracing_subscriber::EnvFilter
+    anyhow::{Context, anyhow, bail, ensure}, axum::{Router, body::Body, debug_handler, extract::{FromRequestParts, Request, State}, http::{HeaderName, Response}, response::IntoResponse}, clap::Parser, reqwest::StatusCode, serde::{Deserialize, Serialize}, std::{ops::Deref, sync::Arc}, tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody}, tracing::{debug, error, info, trace, warn}, tracing_subscriber::EnvFilter
 };
 
 mod data;
@@ -36,6 +36,8 @@ pub struct Opts {
     #[clap(long, env = "GIT_DEFAULT_REPO_USER")]
     /// Default user to use when looking for a repo, if no user was provided in the request
     pub git_default_repo_user: String,
+    #[clap(env = "GIT_PASSWORD")]
+    pub git_password: String,
 }
 
 
@@ -113,8 +115,13 @@ impl FromRequestParts<AppState> for RequestedRepo {
     }
 }
 
+#[debug_handler]
 async fn handle_request(state: State<AppState>, req_repo: RequestedRepo, req: Request<Body>) -> Result<Response<ServeFileSystemResponseBody>, AppError> {
     let repo_path = state.data.get_repo(&req_repo.user, &req_repo.repo, &state.opts).await?;
+    if req.uri().path().split('/').any(|segment| segment.eq(".git")) {
+        warn!("disallowing access to .git directory");
+        return Err(AppError::NotFound)
+    }
     debug!("Serving static repo: {:?}", repo_path);
     ServeDir::new(repo_path).try_call(req).await.map_err(|e| {
         error!("Failed to serve static repo: {e}");
