@@ -1,6 +1,6 @@
 #![allow(unused_imports)]
 use ::{
-    anyhow::{Context, anyhow, bail, ensure}, axum::{Router, body::Body, debug_handler, extract::{FromRequestParts, Request, State}, http::{HeaderName, Response}, response::IntoResponse}, clap::Parser, reqwest::StatusCode, serde::{Deserialize, Serialize}, std::{ops::Deref, sync::Arc}, tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody}, tracing::{debug, error, info, trace, warn}, tracing_subscriber::EnvFilter
+    anyhow::{Context, anyhow, bail, ensure}, axum::{Router, body::Body, debug_handler, extract::{FromRequestParts, Request, State}, http::{HeaderName, Response}, response::IntoResponse}, clap::Parser, reqwest::StatusCode, serde::{Deserialize, Serialize}, std::{ops::Deref, sync::Arc}, tokio::signal, tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody}, tracing::{debug, error, info, trace, warn}, tracing_subscriber::EnvFilter
 };
 
 mod data;
@@ -70,9 +70,35 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(
         tokio::net::TcpListener::bind(format!("{}:{}", &state.opts.addr, &state.opts.port)).await.inspect(|_| info!("Listening for HTTP connections on: http://{}:{}", &state.opts.addr, &state.opts.port))?,
         Router::new().fallback(handle_request).with_state(state).into_make_service()
-    ).await?;
-    
-    Ok(())
+    )
+        .with_graceful_shutdown(shutdown_signal())
+        .await
+        .context("Failed to run server")
+}
+
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
+    };
+
+    // Listen for SIGTERM (This is what `docker stop` sends)
+    #[cfg(unix)]
+    let terminate = async {
+        signal::unix::signal(signal::unix::SignalKind::terminate())
+            .expect("Failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    // If we are not on Unix, just create a future that never resolves
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => info!("Received Ctrl+C"),
+        _ = terminate => info!("Received SIGTERM"),
+    };
+    info!("Shutting down...");
 }
 
 #[derive(Debug)]

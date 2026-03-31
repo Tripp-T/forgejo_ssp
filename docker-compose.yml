@@ -1,9 +1,11 @@
 services:
   forgejo_ssp:
     build: .
+    image: forgejo.trippt.xyz/tthrift/forgejo_ssp:latest
     volumes:
       - ./data:/data
     ports:
       - 3000:3000
     env_file:
       - .env
+    restart: unless-stopped
