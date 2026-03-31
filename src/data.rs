@@ -58,17 +58,19 @@ impl DataManager {
             let obj = repository.revparse_single(&desired_branch)
                 .map_err(|e| {
                     error!("Failed to find desired branch for remote repository: {e}");
-                    std::fs::remove_dir_all(local_path).context("Failed to remove local repository").unwrap();
+                    std::fs::remove_dir_all(&local_path).context("Failed to remove local repository").unwrap();
                     AppError::NotFound
                 })?;
             
             repository.checkout_tree(&obj, Some(CheckoutBuilder::new().force())).map_err(|e| {
                 error!("Failed to checkout desired branch for remote repository: {e}");
+                std::fs::remove_dir_all(&local_path).context("Failed to remove local repository").unwrap();
                 AppError::InternalError
             })?;
     
             repository.set_head(&format!("refs/heads/{}", &opts.git_pages_branch)).map_err(|e| {
                 error!("Failed to set head for remote repository: {e}");
+                std::fs::remove_dir_all(&local_path).context("Failed to remove local repository").unwrap();
                 AppError::InternalError
             })?;
         }
@@ -119,7 +121,7 @@ pub struct RepoMeta {
 }
 impl Default for RepoMeta {
     fn default() -> Self {
-        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
+        let current_time = current_time_seconds();
         Self {
             created_at: current_time,
             updated_at: current_time,
@@ -129,11 +131,13 @@ impl Default for RepoMeta {
 }
 impl RepoMeta {
     pub fn update(&mut self) {
-        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
-        self.updated_at = current_time;
+        self.updated_at = current_time_seconds();
     }
     pub fn seconds_since_updated(&self) -> u64 {
-        let current_time = std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs();
-        current_time - self.updated_at
+        current_time_seconds() - self.updated_at
     }
+}
+
+fn current_time_seconds() -> u64 {
+    std::time::SystemTime::now().duration_since(UNIX_EPOCH).expect("SystemTime should be after Unix Epoch!").as_secs()
 }
