@@ -37,22 +37,47 @@ impl DataManager {
         let local_path = self.data_dir.join(user).join(repo);
         let repo_url = format!("{base_url}/{user}/{repo}.git", base_url = opts.git_https_base_url);
 
-        let repository = RepoBuilder::new()
-            .fetch_options({
+        let repository = if local_path.exists() {
+            // Open existing repository
+            let repository = Repository::open(&local_path).map_err(|e| {
+                error!("Failed to open local repository: {e}");
+                AppError::InternalError
+            })?;
+            
+            // git pull
+            repository.find_remote("origin").and_then(|mut remote| {
                 let mut callbacks = RemoteCallbacks::new();
                 callbacks.credentials(|_url, _, _| {
                     Cred::userpass_plaintext("git", &opts.git_password)
                 });
                 let mut fo = git2::FetchOptions::new();
                 fo.remote_callbacks(callbacks);
-                fo
-            })
-            .clone(&repo_url, &local_path)
-            .map_err(|e| {
-                error!("Failed to clone remote repository: {e}");
+                remote.fetch(&[&opts.git_pages_branch], Some(&mut fo), None)
+            }).map_err(|e| {
+                error!("Failed to fetch remote repository: {e}");
                 AppError::InternalError
             })?;
-        
+
+            repository
+        } else {
+            // Clone remote repository
+            RepoBuilder::new()
+                .fetch_options({
+                    let mut callbacks = RemoteCallbacks::new();
+                    callbacks.credentials(|_url, _, _| {
+                        Cred::userpass_plaintext("git", &opts.git_password)
+                    });
+                    let mut fo = git2::FetchOptions::new();
+                    fo.remote_callbacks(callbacks);
+                    fo
+                })
+                .clone(&repo_url, &local_path)
+                .map_err(|e| {
+                    error!("Failed to clone remote repository: {e}");
+                    AppError::InternalError
+                })?
+        };
+        // Checkout desired branch
         {
             let desired_branch = format!("origin/{}", opts.git_pages_branch);
             let obj = repository.revparse_single(&desired_branch)
