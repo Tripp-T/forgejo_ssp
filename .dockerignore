@@ -1,0 +1,7 @@
+/data
+/target
+/.direnv
+.env*
+!.env.example
+Dockerfile
+docker-compose.yml
