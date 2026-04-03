@@ -12,6 +12,7 @@ use ::{
     reqwest::StatusCode,
     serde::{Deserialize, Serialize},
     std::{fmt::Display, ops::Deref, sync::Arc},
+    thiserror::Error as ThisError,
     tokio::signal,
     tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody},
     tracing::{debug, error, info, warn},
@@ -127,10 +128,13 @@ async fn shutdown_signal() {
     info!("Shutting down...");
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, ThisError)]
 enum AppError {
+    #[error("Not Found")]
     NotFound,
+    #[error("Invalid Request")]
     InvalidRequest,
+    #[error("Internal Error")]
     InternalError,
 }
 impl IntoResponse for AppError {

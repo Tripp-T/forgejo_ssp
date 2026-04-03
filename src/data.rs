@@ -4,7 +4,7 @@ use {
         Cred, RemoteCallbacks, Repository,
         build::{CheckoutBuilder, RepoBuilder},
     },
-    std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH},
+    std::{collections::HashMap, path::Path, time::UNIX_EPOCH},
     tokio::{
         fs,
         sync::{Mutex, RwLock, oneshot},
@@ -35,10 +35,7 @@ impl DataManager {
         req_repo: RequestedRepo,
         opts: &Opts,
     ) -> Result<std::path::PathBuf, AppError> {
-        let destination = self
-            .data_dir
-            .join(req_repo.user.clone())
-            .join(req_repo.repo.clone());
+        let destination = self.data_dir.join(&req_repo.user).join(&req_repo.repo);
         if destination.exists()
             && let Some(meta) = self.get_meta(&req_repo).await?
             && meta.seconds_since_updated() < 60 * 60
@@ -53,10 +50,7 @@ impl DataManager {
 
     /// Refreshes local repository with remote
     pub async fn refresh_repo(&self, req_repo: RequestedRepo, opts: &Opts) -> Result<(), AppError> {
-        let destination = self
-            .data_dir
-            .join(req_repo.user.clone())
-            .join(req_repo.repo.clone());
+        let destination = self.data_dir.join(&req_repo.user).join(&req_repo.repo);
         let repo_url = format!(
             "{base_url}/{req_repo}.git",
             base_url = opts.git_https_base_url
@@ -76,7 +70,7 @@ impl DataManager {
     pub async fn get_meta(&self, req_repo: &RequestedRepo) -> Result<Option<RepoMeta>, AppError> {
         let path = self
             .data_dir
-            .join(req_repo.user.clone())
+            .join(&req_repo.user)
             .join(format!("{}.meta.json", req_repo.repo));
         if !path.exists() {
             return Ok(None);
@@ -96,7 +90,7 @@ impl DataManager {
     pub async fn set_meta(&self, req_repo: &RequestedRepo, meta: RepoMeta) -> Result<(), AppError> {
         let path = self
             .data_dir
-            .join(req_repo.user.clone())
+            .join(&req_repo.user)
             .join(format!("{}.meta.json", req_repo.repo));
         let meta = serde_json::to_string(&meta).map_err(|e| {
             error!("Failed to serialize meta: {e}");
@@ -177,7 +171,7 @@ impl FetchingManager {
         &self,
         repo: RequestedRepo,
         url: String,
-        destination: &PathBuf,
+        destination: &Path,
         opts: &Opts,
     ) -> Result<(), AppError> {
         if self.is_fetching(&repo).await {
@@ -194,7 +188,7 @@ impl FetchingManager {
         }
         self.set_status(repo.clone(), FetchingStatus::Fetching)
             .await;
-        let new_status = match self._fetch(url, destination, opts).await {
+        let new_status = match self.fetch_inner(url, destination, opts).await {
             Ok(_) => FetchingStatus::Idle,
             Err(e) => FetchingStatus::Failed(e),
         };
@@ -211,10 +205,10 @@ impl FetchingManager {
         }
     }
     /// private method to perform the fetch, should only ever be called by the public fetch method
-    async fn _fetch(
+    async fn fetch_inner(
         &self,
         url: String,
-        destination: &PathBuf,
+        destination: &Path,
         opts: &Opts,
     ) -> Result<(), AppError> {
         let repository = if destination.exists() {
