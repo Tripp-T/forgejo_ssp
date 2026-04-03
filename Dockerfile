@@ -1,4 +1,4 @@
-FROM lukemathwalker/cargo-chef:latest-rust-1.94-slim AS chef
+FROM lukemathwalker/cargo-chef:latest-rust-1.94-slim-bookworm AS chef
 WORKDIR /usr/src/app
 # Install system dependencies needed for both planning and building
 RUN apt-get update && apt-get install -y pkg-config openssl libssl-dev && rm -rf /var/lib/apt/lists/*
@@ -18,9 +18,8 @@ COPY . .
 RUN cargo build --release
 
 # Runtime stage
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y ca-certificates && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /usr/src/app/target/release/forgejo_ssp /usr/local/bin/forgejo_ssp
-EXPOSE 3000
 ENV RUST_LOG="info"
 CMD ["forgejo_ssp"]
