@@ -200,12 +200,9 @@ async fn handle_request(
     req: Request<Body>,
 ) -> Result<Response<ServeFileSystemResponseBody>, AppError> {
     let repo_path = state.data.get_repo(req_repo, &state.opts).await?;
-    if req
-        .uri()
-        .path()
-        .split('/')
-        .any(|segment| segment.eq(".git"))
-    {
+    if req.uri().path().split('/').any(|segment| {
+        segment.eq(".git") || segment.eq(".env") || segment.chars().all(|c| c.eq(&'.'))
+    }) {
         warn!("disallowing access to .git directory");
         return Err(AppError::NotFound);
     }
