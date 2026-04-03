@@ -1,22 +1,15 @@
-use std::{
-    collections::HashMap,
-    io::{self, Cursor},
-    path::PathBuf,
-    time::UNIX_EPOCH,
+use {
+    crate::*,
+    git2::{
+        Cred, RemoteCallbacks, Repository,
+        build::{CheckoutBuilder, RepoBuilder},
+    },
+    std::{collections::HashMap, path::PathBuf, time::UNIX_EPOCH},
+    tokio::{
+        fs,
+        sync::{Mutex, RwLock, oneshot},
+    },
 };
-
-use clap::error;
-use git2::{
-    Cred, RemoteCallbacks, Repository,
-    build::{CheckoutBuilder, RepoBuilder},
-};
-use reqwest::Url;
-use tokio::{
-    fs,
-    sync::{Mutex, RwLock, oneshot},
-};
-
-use crate::*;
 
 pub struct DataManager {
     data_dir: std::path::PathBuf,

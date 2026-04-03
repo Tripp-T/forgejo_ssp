@@ -1,6 +1,5 @@
-#![allow(unused_imports)]
 use ::{
-    anyhow::{Context, anyhow, bail, ensure},
+    anyhow::Context,
     axum::{
         Router,
         body::Body,
@@ -15,7 +14,7 @@ use ::{
     std::{fmt::Display, ops::Deref, sync::Arc},
     tokio::signal,
     tower_http::services::{ServeDir, fs::ServeFileSystemResponseBody},
-    tracing::{debug, error, info, trace, warn},
+    tracing::{debug, error, info, warn},
     tracing_subscriber::EnvFilter,
 };
 
